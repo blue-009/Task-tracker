@@ -1,12 +1,14 @@
 import { Link } from 'react-router-dom';
-import { patch, useApi } from '../api.js';
+import { useQ } from '../api.js';
+import { supabase, ok } from '../supabase.js';
 import { useMe } from '../me.js';
 import { Card, Check, Empty, GRID, GRID2, Icon, ROW, STAT_BOX, Stat } from '../ui.jsx';
 
 export default function Dashboard() {
   const { user } = useMe();
-  const [s, loadS] = useApi('/me/stats');
-  const [todos, load] = useApi('/items?kind=todo');
+   const [s, loadS] = useQ(() => supabase.rpc('my_stats'));
+  const [todos, load] = useQ(() => supabase.from('items')
+    .select('id,title,done').eq('kind', 'todo').order('created_at', { ascending: false }));
   if (!s || !todos) return null;
   const h = new Date().getHours();
   const g = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
@@ -34,7 +36,7 @@ export default function Dashboard() {
           <h3 className="font-bold mb-1.5">Up next</h3>
           {od.slice(0, 5).map(t => (
             <div key={t.id} className={ROW}>
-              <Check on={false} onClick={() => patch('/items/' + t.id, { done: true }).then(() => { load(); loadS(); })} />
+              <Check on={false} onClick={() => ok(supabase.from('items').update({ done: true }).eq('id', t.id)).then(() => { load(); loadS(); })} />
               <span className="flex-1">{t.title}</span>
             </div>
           ))}
