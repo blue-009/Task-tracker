@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { supabase, ok } from './supabase.js';
 
 export const tok = {
   get: () => localStorage.getItem('token'),
@@ -28,7 +29,14 @@ export function useApi(path) {
   return [data, load];
 }
 
-export const logout = async () => { try { await post('/me/logout'); } catch {} tok.set(null); location.reload(); };
+export const logout = async () => { await supabase.auth.signOut(); location.reload(); };
+
+export function useQ(fn, deps = []) {
+  const [data, setData] = useState(null);
+  const load = useCallback(() => ok(fn()).then(setData).catch(() => {}), deps);
+  useEffect(() => { load(); }, [load]);
+  return [data, load];
+}
 
 export const lines = s => s.split('\n')
   .map(x => x.trim().replace(/^(?:[-*•]\s*)?(?:\[[ xX]\]\s*)?/, '').trim()).filter(Boolean);
