@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { get, tok } from './api.js';
+import { supabase, ok } from './supabase.js';
 import { Me } from './me.js';
 import Auth from './pages/Auth.jsx';
 import Shell from './components/Shell.jsx';
@@ -7,11 +7,25 @@ import Shell from './components/Shell.jsx';
 export default function App() {
   const [user, setUser] = useState(undefined);
 
-  const load = useCallback(() => {
-    if (!tok.get()) return setUser(null);
-    return get('/me').then(setUser).catch(() => { tok.set(null); setUser(null); });
+  const load = useCallback(async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return setUser(null);
+      const { data: a } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      if (a.nextLevel === 'aal2' && a.currentLevel !== 'aal2') return setUser(null); // 2FA not finished
+      const [p, f] = await Promise.all([
+        ok(supabase.from('profiles').select('*').single()),
+        supabase.auth.mfa.listFactors(),
+      ]);
+      setUser({ ...p, email: session.user.email, otp: f.data.totp.length > 0 });
+    } catch { setUser(null); }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    const { data } = supabase.auth.onAuthStateChange(ev => { if (ev === 'SIGNED_OUT') setUser(null); });
+    return () => data.subscription.unsubscribe();
+  }, []);
 
   useEffect(() => {
     if (!user) return;

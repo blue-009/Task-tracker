@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { post, tok } from '../api.js';
+import { supabase } from '../supabase.js';
 import { Btn, Card, Logo, inp, useUI } from '../ui.jsx';
 
 export default function Auth({ onDone }) {
@@ -8,18 +8,29 @@ export default function Auth({ onDone }) {
   const [pending, setPending] = useState(null);
   const title = { login: 'Welcome back', signup: 'Create your account', otp: 'Verification' }[mode];
 
-  const submit = async e => {
+    const submit = async e => {
     e.preventDefault();
     const v = Object.fromEntries(new FormData(e.target));
     try {
       if (mode === 'signup') {
         if (v.password !== v.confirm) return toast('Passwords do not match.');
-        tok.set((await post('/auth/signup', v)).token); onDone();
+        const { data, error } = await supabase.auth.signUp({
+          email: v.email, password: v.password, options: { data: { name: v.name } } });
+        if (error) throw error;
+        if (!data.session) return toast('Check your email to confirm your account.');
+        onDone();
       } else if (mode === 'login') {
-        const r = await post('/auth/login', v);
-        if (r.pending) { setPending(r.pending); setMode('otp'); } else { tok.set(r.token); onDone(); }
+        const { error } = await supabase.auth.signInWithPassword({ email: v.email, password: v.password });
+        if (error) throw error;
+        const { data: a } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+        if (a.nextLevel === 'aal2' && a.currentLevel !== 'aal2') {
+          const { data: f } = await supabase.auth.mfa.listFactors();
+          setPending(f.totp[0].id); setMode('otp');
+        } else onDone();
       } else {
-        tok.set((await post('/auth/otp', { pending, code: v.code })).token); onDone();
+        const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId: pending, code: v.code });
+        if (error) throw error;
+        onDone();
       }
     } catch (err) { toast(err.message); }
   };
