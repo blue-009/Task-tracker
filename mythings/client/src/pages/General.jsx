@@ -1,4 +1,4 @@
-import { patch } from '../api.js';
+import { supabase, ok } from '../supabase.js';
 import { useMe } from '../me.js';
 import { Btn, Card, GRID2, PageHead, Seg, inp, useUI } from '../ui.jsx';
 
@@ -11,9 +11,10 @@ export default function General() {
   const save = async e => {
     e.preventDefault();
     const { email, ...v } = Object.fromEntries(new FormData(e.target));
-    await patch('/me', v); await reload(); toast('Profile saved.');
+    try { await ok(supabase.from('profiles').update(v).eq('id', user.id)); await reload(); toast('Profile saved.'); }
+    catch (err) { toast(err.message); }
   };
-  const set = (k, v) => { setUser(u => ({ ...u, [k]: v })); patch('/me', { [k]: v }); };
+  const set = (k, v) => { setUser(u => ({ ...u, [k]: v })); ok(supabase.from('profiles').update({ [k]: v }).eq('id', user.id)).catch(() => {}); };
 
   return (
     <>

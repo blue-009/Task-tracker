@@ -1,27 +1,35 @@
 import { useEffect, useState } from 'react';
-import { b64, b64blob, del, enc, fmt, get, post, saveBlob, sz, useApi } from '../api.js';
+import { fmt, saveBlob, sz, useQ } from '../api.js';
+import { supabase, ok } from '../supabase.js';
 import { useMe } from '../me.js';
 import { Badge, Btn, Card, Empty, GRID2, Icon, IconBtn, PageHead, ROW, Seg, inp, useUI } from '../ui.jsx';
 
 function Thumb({ f }) {
   const [u, setU] = useState();
-  useEffect(() => { get(`/files/${f.id}/data`).then(d => setU(`data:${d.type};base64,${d.data}`)).catch(() => {}); }, [f.id]);
+  useEffect(() => { supabase.storage.from('files').createSignedUrl(f.path, 300).then(r => setU(r.data?.signedUrl)).catch(() => {}); }, [f.path]);
   return u ? <img src={u} alt="" className="w-full h-full object-cover" /> : null;
 }
 
 export default function Save() {
   const { user } = useMe();
   const { toast, confirm } = useUI();
-  const [files, load] = useApi('/files');
+  const [files, load] = useQ(() => supabase.from('files').select('id,name,size,type,visibility,path,created_at').order('created_at', { ascending: false }));
   const [f, setF] = useState('all');
   const [vis, setVis] = useState(user.def_vis);
   if (!files) return null;
+  const saveFile = async (blob, name, type) => {
+    const path = `${user.id}/${crypto.randomUUID()}`;
+    await ok(supabase.storage.from('files').upload(path, blob, { contentType: type === 'file' ? 'application/octet-stream' : type }));
+    try {
+      await ok(supabase.from('files').insert({ name: name.slice(0, 200), size: blob.size, type, visibility: vis, path }));
+    } catch (e) { await supabase.storage.from('files').remove([path]); throw e; }
+  };
   const L = files.filter(x => f === 'all' || x.visibility === f);
 
   const upload = async e => {
     for (const file of e.target.files) {
       if (file.size > 1.5e6) { toast(file.name + ' is over 1.5 MB.'); continue; }
-      try { await post('/files', { name: file.name, type: file.type || 'file', visibility: vis, data: await b64(file) }); }
+      try { await saveFile(file, file.name, file.type || 'file'); }
       catch (err) { toast(err.message); }
     }
     e.target.value = ''; load();
@@ -29,11 +37,13 @@ export default function Save() {
   const note = async e => {
     e.preventDefault();
     const v = Object.fromEntries(new FormData(e.target));
-    await post('/files', { name: v.title.trim() + '.txt', type: 'text/plain', visibility: vis, data: enc(v.body.trim()) });
-    e.target.reset(); load();
+    try {
+      await saveFile(new Blob([v.body.trim()], { type: 'text/plain' }), v.title.trim() + '.txt', 'text/plain');
+      e.target.reset(); load();
+    } catch (err) { toast(err.message); }
   };
-  const dl = async x => { const d = await get(`/files/${x.id}/data`); saveBlob(x.name, b64blob(d.data, d.type)); };
-  const rm = async x => { if (await confirm('Delete this file?', 'This cannot be undone.')) { await del('/files/' + x.id); load(); } };
+  const dl = async x => { try { saveBlob(x.name, await ok(supabase.storage.from('files').download(x.path))); } catch (err) { toast(err.message); } };
+  const rm = async x => { if (await confirm('Delete this file?', 'This cannot be undone.')) { await supabase.storage.from('files').remove([x.path]); await ok(supabase.from('files').delete().eq('id', x.id)); load(); } };
 
   return (
     <>

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { del, lines, patch, post, useApi } from '../api.js';
+import { lines, useQ } from '../api.js';
+import { supabase, ok } from '../supabase.js';
 import { Badge, Btn, Card, Check, Icon, IconBtn, PB, PR, inp, useUI } from '../ui.jsx';
 
 const SL = { todo: 'To do', doing: 'In progress', done: 'Done' };
@@ -9,7 +10,9 @@ export default function TaskDetail() {
   const { id } = useParams();
   const nav = useNavigate();
   const { confirm } = useUI();
-  const [t, load] = useApi('/items/' + id);
+  const [t, load] = useQ(() => supabase.from('items')
+    .select('id,kind,title,priority,status,done,subs:subitems(id,title,done,created_at)')
+    .eq('id', id).order('created_at', { referencedTable: 'subitems' }).single(), [id]);
   const [adding, setAdding] = useState(false);
   if (!t) return null;
 
@@ -20,9 +23,10 @@ export default function TaskDetail() {
   const submit = async e => {
     e.preventDefault();
     const titles = lines(e.target.elements.t.value);
-    if (titles.length) { await post(`/items/${id}/subs`, { titles }); e.target.reset(); load(); }
+    if (titles.length) { await ok(supabase.from('subitems').insert(titles.map((title, i) => ({
+      item_id: id, title: title.slice(0, 120), created_at: new Date(Date.now() + i).toISOString() })))); e.target.reset(); load(); }
   };
-  const rm = async s => { if (await confirm('Delete this item?', 'This cannot be undone.')) { await del('/items/subs/' + s.id); load(); } };
+  const rm = async s => { if (await confirm('Delete this item?', 'This cannot be undone.')) { await ok(supabase.from('subitems').delete().eq('id', s.id)); load(); } };
 
   return (
     <>
@@ -45,7 +49,7 @@ export default function TaskDetail() {
         ) : <div><Btn onClick={() => setAdding(true)}>+ Add</Btn></div>}
         {t.subs.map(s => (
           <div key={s.id} className="flex items-center gap-3">
-            <Check on={s.done} onClick={() => patch('/items/subs/' + s.id, { done: !s.done }).then(load)} />
+            <Check on={s.done} onClick={() => ok(supabase.from('subitems').update({ done: !s.done }).eq('id', s.id)).then(load)} />
             <span className={`flex-1 ${s.done ? 'line-through text-muted' : ''}`}>{s.title}</span>
             <IconBtn onClick={() => rm(s)} aria-label="Delete"><Icon n="trash" className="w-[18px] h-[18px]" /></IconBtn>
           </div>

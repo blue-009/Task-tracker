@@ -1,8 +1,9 @@
-import { useApi } from '../api.js';
+import { useQ } from '../api.js';
+import { supabase } from '../supabase.js';
 import { Card, GRID, Logo, PageHead, STAT_BOX, Stat } from '../ui.jsx';
 
 export default function About() {
-  const [s] = useApi('/me/stats');
+  const [s] = useQ(() => supabase.rpc('my_stats'));
   if (!s) return null;
   return (
     <>

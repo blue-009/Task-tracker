@@ -1,14 +1,15 @@
-import { patch, post, useApi } from '../api.js';
+import { useQ } from '../api.js';
+import { supabase, ok } from '../supabase.js';
 import { useMe } from '../me.js';
 import { Btn, Card, Empty, GRID, PageHead, ROW, STAT_BOX, Seg, Stat, Switch } from '../ui.jsx';
 import { BackupCard, OtpCard, PasskeyCard, PasswordCard, SessionsCard } from './Security.jsx';
 
 export default function Privacy() {
   const { user, setUser } = useMe();
-  const [files, load] = useApi('/files');
+  const [files, load] = useQ(() => supabase.from('files').select('id,name,visibility').order('created_at', { ascending: false }));
   if (!files) return null;
   const pv = files.filter(x => x.visibility === 'private').length;
-  const set = (k, v) => { setUser(u => ({ ...u, [k]: v })); patch('/me', { [k]: v }); };
+  const set = (k, v) => { setUser(u => ({ ...u, [k]: v })); ok(supabase.from('profiles').update({ [k]: v }).eq('id', user.id)).catch(() => {}); };
 
   return (
     <>
@@ -28,14 +29,14 @@ export default function Privacy() {
       <Card>
         <div className="flex justify-between items-center gap-2.5 mb-1.5">
           <h3 className="font-bold">Your files</h3>
-          <Btn v="ghost" onClick={async () => { await post('/files/private-all'); load(); }}>Make all private</Btn>
+          <Btn v="ghost" onClick={async () => { await ok(supabase.from('files').update({ visibility: 'private' }).eq('visibility', 'public')); load(); }}>Make all private</Btn>
         </div>
         {files.map(x => (
           <div key={x.id} className={ROW}>
             <div className="flex-1 min-w-0 truncate"><b>{x.name}</b></div>
             <span className="text-muted text-sm">{x.visibility === 'private' ? 'Private' : 'Public'}</span>
             <Switch on={x.visibility === 'private'} label="Private"
-              onChange={() => patch('/files/' + x.id, { visibility: x.visibility === 'private' ? 'public' : 'private' }).then(load)} />
+              onChange={() => ok(supabase.from('files').update({ visibility: x.visibility === 'private' ? 'public' : 'private' }).eq('id', x.id)).then(load)} />
           </div>
         ))}
         {!files.length && <Empty t="No files to manage yet." />}

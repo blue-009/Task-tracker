@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { del, fmt, post, useApi } from '../api.js';
+import { fmt, useQ } from '../api.js';
+import { supabase, ok } from '../supabase.js';
 import { useMe } from '../me.js';
 import { Btn, Card, Icon, IconBtn, PageHead, inp, useUI } from '../ui.jsx';
 
@@ -9,7 +10,7 @@ const MOOD = ['😊', '😌', '😐', '😢', '😤'];
 export default function Journal() {
   const { user } = useMe();
   const { toast, confirm } = useUI();
-  const [list, load] = useApi('/journal');
+  const [list, load] = useQ(() => supabase.from('journal').select('id,created_at').order('created_at', { ascending: false }));
   const [open, setOpen] = useState({});
   const [ask, setAsk] = useState(null);
 
@@ -23,15 +24,17 @@ export default function Journal() {
   const create = async e => {
     e.preventDefault();
     const v = Object.fromEntries(new FormData(e.target));
-    try { await post('/journal', v); e.target.reset(); load(); } catch (err) { toast(err.message); }
+    try { if (!v.title.trim() || !v.body.trim()) throw new Error('Fill in all fields.');
+      await ok(supabase.from('journal').insert({ title: v.title.trim().slice(0, 80), mood: v.mood, body: v.body.trim() })); e.target.reset(); load(); } catch (err) { toast(err.message); }
   };
   const unlock = async (e, id) => {
     e.preventDefault();
-    try { const j = await post(`/journal/${id}/unlock`, { key: e.target.elements.k.value }); setOpen(o => ({ ...o, [id]: j })); setAsk(null); }
+    try { const j = await ok(supabase.rpc('unlock_journal', { entry_id: id, key: e.target.elements.k.value }));
+      if (j.error) throw new Error(j.error); setOpen(o => ({ ...o, [id]: j })); setAsk(null); }
     catch (err) { toast(err.message); }
   };
   const rm = async id => {
-    if (await confirm('Delete this journal entry?', 'This cannot be undone.')) { await del('/journal/' + id); setOpen(({ [id]: _, ...o }) => o); load(); }
+    if (await confirm('Delete this journal entry?', 'This cannot be undone.')) { await ok(supabase.from('journal').delete().eq('id', id)); setOpen(({ [id]: _, ...o }) => o); load(); }
   };
 
   return (

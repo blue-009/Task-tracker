@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
-import { del, patch, post, useApi } from '../api.js';
+import { useQ } from '../api.js';
+import { supabase, ok } from '../supabase.js';
 import { Badge, Btn, Card, Empty, Icon, IconBtn, PB, PR, PageHead, inp, useUI } from '../ui.jsx';
 
 const ST = [['todo', 'To do'], ['doing', 'In progress'], ['done', 'Done']];
@@ -7,21 +8,21 @@ const ST = [['todo', 'To do'], ['doing', 'In progress'], ['done', 'Done']];
 export default function Tasks() {
   const nav = useNavigate();
   const { confirm } = useUI();
-  const [items, load] = useApi('/items?kind=task');
+  const [items, load] = useQ(() => supabase.from('items').select('id,kind,title,priority,status,done').eq('kind', 'task').order('created_at', { ascending: false }));
   if (!items) return null;
 
   const add = async e => {
     e.preventDefault();
     const v = Object.fromEntries(new FormData(e.target));
-    await post('/items', { kind: 'task', titles: [v.title], priority: v.priority });
+    await ok(supabase.from('items').insert({ kind: 'task', title: v.title.trim().slice(0, 120), priority: v.priority }));
     e.target.reset(); load();
   };
   const mv = async (t, d) => {
     const n = ST.findIndex(s => s[0] === t.status) + d;
-    if (ST[n]) { await patch('/items/' + t.id, { status: ST[n][0] }); load(); }
+    if (ST[n]) { await ok(supabase.from('items').update({ status: ST[n][0] }).eq('id', t.id)); load(); }
   };
   const rm = async t => {
-    if (await confirm('Delete this task?', 'The task and all its items will be removed.')) { await del('/items/' + t.id); load(); }
+    if (await confirm('Delete this task?', 'The task and all its items will be removed.')) { await ok(supabase.from('items').delete().eq('id', t.id)); load(); }
   };
 
   return (

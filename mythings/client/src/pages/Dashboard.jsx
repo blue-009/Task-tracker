@@ -6,7 +6,7 @@ import { Card, Check, Empty, GRID, GRID2, Icon, ROW, STAT_BOX, Stat } from '../u
 
 export default function Dashboard() {
   const { user } = useMe();
-   const [s, loadS] = useQ(() => supabase.rpc('my_stats'));
+  const [s, loadS] = useQ(() => supabase.rpc('my_stats'));
   const [todos, load] = useQ(() => supabase.from('items')
     .select('id,title,done').eq('kind', 'todo').order('created_at', { ascending: false }));
   if (!s || !todos) return null;

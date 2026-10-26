@@ -1,18 +1,21 @@
 import { useState } from 'react';
-import { ago, del, fmt, get, logout, post, saveBlob, useApi } from '../api.js';
+import { logout, saveBlob } from '../api.js';
+import { supabase, ok, verifyPassword } from '../supabase.js';
 import { useMe } from '../me.js';
 import { Badge, Btn, Card, Switch, inp, useUI } from '../ui.jsx';
 
 const form = e => Object.fromEntries(new FormData(e.target));
 
 export function PasswordCard() {
+  const { user } = useMe();
   const { toast } = useUI();
   const submit = async e => {
     e.preventDefault();
     const f = e.target, v = form(e);
     if (v.next.length < 8) return toast('Use at least 8 characters.');
     if (v.next !== v.confirm) return toast('Passwords do not match.');
-    try { await post('/me/password', v); f.reset(); toast('Password saved.'); } catch (err) { toast(err.message); }
+    try { if (!(await verifyPassword(user.email, v.current))) throw new Error('Current password is wrong.');
+      await ok(supabase.auth.updateUser({ password: v.next })); f.reset(); toast('Password saved.'); } catch (err) { toast(err.message); }
   };
   return (
     <Card className="grid gap-3">
@@ -33,15 +36,29 @@ export function OtpCard() {
   const { user, reload } = useMe();
   const { toast } = useUI();
   const [secret, setSecret] = useState(null);
+  const [factor, setFactor] = useState(null);
 
   const toggle = async () => {
-    if (user.otp) { await del('/me/otp'); reload(); }
-    else setSecret((await post('/me/otp/start')).secret);
+    try {
+      if (user.otp) {
+        const { totp } = await ok(supabase.auth.mfa.listFactors());
+        for (const f of totp) await ok(supabase.auth.mfa.unenroll({ factorId: f.id }));
+        reload();
+      } else {
+        const { all } = await ok(supabase.auth.mfa.listFactors());
+        for (const f of all.filter(f => f.status === 'unverified')) await supabase.auth.mfa.unenroll({ factorId: f.id });
+        const f = await ok(supabase.auth.mfa.enroll({ factorType: 'totp' }));
+        setFactor(f.id); setSecret(f.totp.secret);
+      }
+    } catch (err) { toast(err.message); }
   };
   const confirm = async e => {
     e.preventDefault();
-    try { await post('/me/otp/confirm', { code: form(e).code }); setSecret(null); await reload(); toast('OTP is on.'); }
-    catch (err) { toast(err.message); }
+    try {
+      const ch = await ok(supabase.auth.mfa.challenge({ factorId: factor }));
+      await ok(supabase.auth.mfa.verify({ factorId: factor, challengeId: ch.id, code: form(e).code.trim() }));
+      setSecret(null); await reload(); toast('OTP is on.');
+    } catch (err) { toast(err.message); }
   };
   return (
     <Card className="grid gap-3">
@@ -69,7 +86,7 @@ export function PasskeyCard() {
     const f = e.target, v = form(e);
     if (v.next.length < 4) return toast('Use at least 4 characters.');
     if (v.next !== v.confirm) return toast('Passkeys do not match.');
-    try { await post('/me/passkey', v); f.reset(); await reload(); toast('Passkey saved.'); } catch (err) { toast(err.message); }
+    try { await ok(supabase.rpc('set_journal_passkey', { current_key: v.current ?? '', new_key: v.next })); f.reset(); await reload(); toast('Passkey saved.'); } catch (err) { toast(err.message); }
   };
   return (
     <Card className="grid gap-3">
@@ -87,35 +104,36 @@ export function PasskeyCard() {
 }
 
 export function SessionsCard() {
-  const [list, load] = useApi('/me/sessions');
-  if (!list) return null;
-  const status = s => s.current ? 'Active now' : s.revoked ? 'Signed out' : Date.now() - new Date(s.last_active) < 3e5 ? 'Active' : 'Idle';
+  const { toast } = useUI();
+  const out = async () => {
+    const { error } = await supabase.auth.signOut({ scope: 'others' });
+    toast(error ? error.message : 'Signed out of all other devices.');
+  };
   return (
-    <Card>
-      <h3 className="font-bold mb-1.5">Active sessions</h3>
-      {list.map(s => (
-        <div key={s.id} className="flex items-center gap-3 py-3 border-t border-line flex-wrap">
-          <div className="flex-1">
-            <b>{s.device} · {s.browser}</b>{s.current && <> <Badge className="bg-emerald-500/10 text-emerald-500">This device</Badge></>}
-            <div className="text-muted text-sm">IP: {s.ip}</div>
-            <div className="text-muted text-sm">
-              Signed in {fmt(s.created_at)}, {new Date(s.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · Last active {s.current ? 'just now' : ago(s.last_active)}
-            </div>
-          </div>
-          <Badge className={status(s) === 'Signed out' ? 'bg-soft text-ink' : 'bg-emerald-500/10 text-emerald-500'}>{status(s)}</Badge>
-          {!s.current && !s.revoked && <Btn v="ghost" onClick={async () => { await del('/me/sessions/' + s.id); load(); }}>Sign out</Btn>}
-        </div>
-      ))}
+    <Card className="grid gap-3">
+      <h3 className="font-bold">Active sessions</h3>
+      <p className="text-muted text-sm">You are signed in on this device. Sign out everywhere else with one click.</p>
+      <div><Btn v="ghost" onClick={out}>Sign out other devices</Btn></div>
     </Card>
   );
 }
 
 export function BackupCard() {
-  const { confirm } = useUI();
-  const exp = async () => saveBlob('mythings-backup.json', new Blob([JSON.stringify(await get('/me/export'), null, 1)], { type: 'application/json' }));
+  const { confirm, toast } = useUI();
+  const exp = async () => {
+    try {
+      const [profile, items, subitems, files] = await Promise.all([
+        ok(supabase.from('profiles').select('name,phone,loc,bio,theme,size,def_vis,mask').single()),
+        ok(supabase.from('items').select('id,kind,title,priority,status,done,created_at')),
+        ok(supabase.from('subitems').select('item_id,title,done')),
+        ok(supabase.from('files').select('name,size,type,visibility,created_at')),
+      ]);
+      saveBlob('mythings-backup.json', new Blob([JSON.stringify({ profile, items, subitems, files }, null, 1)], { type: 'application/json' }));
+    } catch (err) { toast(err.message); }
+  };
   const rst = async () => {
     if (await confirm('Erase all data?', 'Your account and every task, list item, journal entry and file will be removed.', 'Erase everything')) {
-      await del('/me'); logout();
+      try { await ok(supabase.functions.invoke('delete-account')); logout(); } catch (err) { toast(err.message); }
     }
   };
   return (

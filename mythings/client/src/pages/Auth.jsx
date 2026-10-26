@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { supabase } from '../supabase.js';
+import { supabase, ok } from '../supabase.js';
 import { Btn, Card, Logo, inp, useUI } from '../ui.jsx';
 
 export default function Auth({ onDone }) {
@@ -8,7 +8,7 @@ export default function Auth({ onDone }) {
   const [pending, setPending] = useState(null);
   const title = { login: 'Welcome back', signup: 'Create your account', otp: 'Verification' }[mode];
 
-    const submit = async e => {
+  const submit = async e => {
     e.preventDefault();
     const v = Object.fromEntries(new FormData(e.target));
     try {
